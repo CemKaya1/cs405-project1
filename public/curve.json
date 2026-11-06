@@ -1,0 +1,75 @@
+{
+  "painting": "Kavunlu Natürmort",
+  "artist": "Şeker Ahmed Paşa",
+  "coordinates": "normalised to the painting: (0,0) bottom-left, (1,1) top-right",
+  "type": "bezier",
+  "continuity": "C1 (handles mirrored at every joint)",
+  "segments": 4,
+  "points": [
+    {
+      "x": 0.2417,
+      "y": 0.4781,
+      "role": "knot"
+    },
+    {
+      "x": 0.2167,
+      "y": 0.5717,
+      "role": "handle"
+    },
+    {
+      "x": 0.2222,
+      "y": 0.7012,
+      "role": "handle"
+    },
+    {
+      "x": 0.2819,
+      "y": 0.7729,
+      "role": "knot"
+    },
+    {
+      "x": 0.3417,
+      "y": 0.8446,
+      "role": "handle"
+    },
+    {
+      "x": 0.4583,
+      "y": 0.8884,
+      "role": "handle"
+    },
+    {
+      "x": 0.5556,
+      "y": 0.8884,
+      "role": "knot"
+    },
+    {
+      "x": 0.6528,
+      "y": 0.8884,
+      "role": "handle"
+    },
+    {
+      "x": 0.7917,
+      "y": 0.8167,
+      "role": "handle"
+    },
+    {
+      "x": 0.8375,
+      "y": 0.7251,
+      "role": "knot"
+    },
+    {
+      "x": 0.8833,
+      "y": 0.6335,
+      "role": "handle"
+    },
+    {
+      "x": 0.9028,
+      "y": 0.4821,
+      "role": "handle"
+    },
+    {
+      "x": 0.8583,
+      "y": 0.4223,
+      "role": "knot"
+    }
+  ]
+}

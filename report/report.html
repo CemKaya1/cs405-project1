@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CS405 Project 1 Report</title>
+<style>
+  @page { size: A4; margin: 12mm 14mm 12mm 14mm; }
+  :root { --ink: #1b1b1b; --muted: #555; --accent: #9a3412; --rule: #d6d3cd; }
+  html { font: 9.2pt/1.38 "Charter", "Georgia", serif; color: var(--ink); }
+  body { margin: 0; }
+  h1 { font: 600 16pt/1.2 "Helvetica Neue", Arial, sans-serif; margin: 0 0 2pt; }
+  h2 { font: 600 11pt/1.3 "Helvetica Neue", Arial, sans-serif; margin: 8pt 0 2pt; color: var(--accent); break-after: avoid; }
+  h3 { font: 600 9.8pt/1.3 "Helvetica Neue", Arial, sans-serif; margin: 7pt 0 2pt; break-after: avoid; }
+  p { margin: 0 0 4pt; text-align: justify; hyphens: auto; }
+  ul { margin: 0 0 5pt; padding-left: 15pt; }
+  li { margin-bottom: 1.5pt; }
+  code, .mono { font: 8.2pt/1.35 "Menlo", "Consolas", monospace; }
+  .meta { color: var(--muted); font: 9pt/1.4 "Helvetica Neue", Arial, sans-serif; margin-bottom: 6pt; border-bottom: 1px solid var(--rule); padding-bottom: 6pt; }
+  .todo { background: #fff3a8; padding: 0 2pt; }
+  figure { margin: 4pt 0 5pt; break-inside: avoid; }
+  figure.narrow { width: 68%; margin-left: auto; margin-right: auto; }
+  figure.half { width: 52%; margin-left: auto; margin-right: auto; }
+  .row.four > figure figcaption { font-size: 7.6pt; }
+  figure img { width: 100%; display: block; border: 1px solid #ccc; }
+  figcaption { font: 8.2pt/1.35 "Helvetica Neue", Arial, sans-serif; color: var(--muted); margin-top: 2.5pt; }
+  .row { display: flex; gap: 8pt; break-inside: avoid; }
+  .row > figure { flex: 1; margin-top: 3pt; }
+  .eq { text-align: center; margin: 4pt 0 6pt; }
+  var { font-style: italic; }
+  .m { display: inline-table; border-left: 1.2px solid #222; border-right: 1.2px solid #222; border-radius: 3px; padding: 0 3pt; vertical-align: middle; font: 8.4pt/1.25 "Menlo", monospace; }
+  .m span { display: table-row; } .m i { display: table-cell; font-style: normal; text-align: right; padding: 0 4pt; }
+  table.data { border-collapse: collapse; font: 8.4pt/1.35 "Helvetica Neue", Arial, sans-serif; margin: 3pt 0 6pt; }
+  table.data th, table.data td { border-bottom: 1px solid var(--rule); padding: 2pt 7pt 2pt 0; text-align: left; }
+  table.data th { color: var(--muted); font-weight: 600; }
+  pre { font: 7.6pt/1.3 "Menlo", monospace; margin: 2pt 0 6pt; white-space: pre; }
+  .cols2 { column-count: 2; column-gap: 14pt; }
+  .page-break { break-before: page; }
+  svg text { font: 7.6pt "Helvetica Neue", Arial, sans-serif; }
+</style>
+</head>
+<body>
+
+<h1>Transformations, Projection &amp; Curves from Paintings</h1>
+<div class="meta">
+  CS405 Introduction to Computer Graphics · Fall 2026 · Project 1 report<br>
+  <span class="todo">[Name Surname]</span> · <span class="todo">[Student ID]</span> ·
+  Repository: <span class="todo">[https://github.com/…]</span> (tag <code>project1-final</code>)
+</div>
+
+<h2>1 · Painting and scene</h2>
+<p><b>Painting:</b> <i>Kavunlu Natürmort</i> (Still Life with Melon) by <b>Şeker Ahmed Paşa</b>, Sakıp Sabancı Museum collection.
+I chose it for the curve part. The whole melon has one long, clean contour against a dark background: the cut face on the left,
+the arc of the rind across the top and the rounded right end. That makes it a good shape to trace with a few cubic segments.
+The composition is also simple, a single object on a table, so a 3D table in front of the canvas continues the painting naturally.</p>
+<p>The painting hangs as a textured quad in the <var>z</var> = 0 plane, inside a wooden frame and against a wall. In front of it is a table.
+On the table are the Part A box, a melon on a plate (a nod to the painting) and a desk lamp whose arm moves (Part B). The traced
+outline and a small cone that travels along it (Part D) sit on the painting itself. Everything is one WebGPU page (Figure 1).</p>
+
+<figure class="narrow">
+  <img src="img/overview.jpg" alt="">
+  <figcaption><b>Figure 1.</b> The application in side-by-side mode. Left: main (orbit) camera with the traced melon outline,
+  control polygon and the de Casteljau points. Right: fixed inspection camera showing the main camera's frustum. Panels show
+  timing, camera parameters and the matrices of Part A, B and D.</figcaption>
+</figure>
+
+<h2>2 · Part A: transformations</h2>
+<p><b>Convention.</b> I use column vectors, <var>p</var>′ = <var>M p</var>, and a right-handed world with <var>y</var> up. Matrices are
+<code>Float32Array(16)</code> in column-major order: entry (<var>r</var>, <var>c</var>) is stored at index 4<var>c</var> + <var>r</var>.
+This is exactly how WGSL reads a <code>mat4x4f</code> from a uniform buffer, so nothing is transposed on upload. Because vectors
+are multiplied on the right, <var>M</var> = <var>T·R·S</var> applies the scale first and the translation last.
+<code>src/math/mat4.js</code> implements identity, multiply, translate, rotate about x/y/z, scale, transpose and the inverse of a rigid
+transform, <var>M</var><sup>−1</sup> = [<var>R</var><sup>T</sup> | −<var>R</var><sup>T</sup><var>t</var>]. The rigid inverse is used again for the view matrix
+and for converting mouse rays into the painting's frame.</p>
+
+<p>For the box with <var>T</var>(−0.95, 0.32, 0.15), <var>R<sub>z</sub></var>(30°) and <var>S</var>(0.55, 0.30, 0.30) the two orders give:</p>
+<div class="eq">
+<var>T·R·S</var> =
+<span class="m"><span><i>0.476</i><i>−0.150</i><i>0</i><i>−0.950</i></span><span><i>0.275</i><i>0.260</i><i>0</i><i>0.320</i></span><span><i>0</i><i>0</i><i>0.300</i><i>0.150</i></span><span><i>0</i><i>0</i><i>0</i><i>1</i></span></span>
+&nbsp;&nbsp;&nbsp;
+<var>S·R·T</var> =
+<span class="m"><span><i>0.476</i><i>−0.275</i><i>0</i><i>−0.540</i></span><span><i>0.150</i><i>0.260</i><i>0</i><i>−0.059</i></span><span><i>0</i><i>0</i><i>0.300</i><i>0.045</i></span><span><i>0</i><i>0</i><i>0</i><i>1</i></span></span>
+</div>
+<p>In <var>T·R·S</var> the box is scaled in its own axes, rotated, then moved. The last column is exactly the translation I typed, and the
+columns of the 3×3 block stay perpendicular, so the box keeps its right angles. In <var>S·R·T</var> the translation is applied first,
+so the offset itself gets rotated and scaled: the box ends up at <var>S R t</var> = (−0.540, −0.059, 0.045), not at <var>t</var>.
+The scale also comes after the rotation, so it stretches along the <i>world</i> axes of an already rotated box. The first two
+columns are no longer orthogonal (their dot product is −0.092), and the box turns into a sheared parallelepiped. Figure 2
+shows both cases. The wireframe "ghost" is always drawn with the order that is not in use. Everywhere else in the code a local
+transform is built as <var>T·R·S</var>.</p>
+
+<div class="row">
+  <figure><img src="img/a_trs.jpg" alt=""><figcaption><b>Figure 2a.</b> <var>M = T·R·S</var> (in use, highlighted). The yellow wireframe is the <var>S·R·T</var> result.</figcaption></figure>
+  <figure><img src="img/a_srt.jpg" alt=""><figcaption><b>Figure 2b.</b> <var>M = S·R·T</var>: the box moves towards the origin and is sheared by the non-uniform scale.</figcaption></figure>
+</div>
+
+<h2>3 · Part B: scene graph</h2>
+<p>A <code>Node</code> holds a name, a local matrix, its parent and children, an optional mesh and an optional <code>update(node, time)</code>
+function. One depth-first traversal per frame computes <var>W</var><sub>node</sub> = <var>W</var><sub>parent</sub> · <var>L</var><sub>node</sub>. Parents are always
+finished before their children. The graph has 25 nodes and 7 levels (Figure 3). Three joints are animated: the lamp's
+<i>swivel</i> turns about <var>y</var> by 0.45 sin(0.4<var>t</var>) rad, the <i>elbow</i> bends by 98° + 10° sin(0.9<var>t</var>) and the <i>head</i>
+nods by 55° + 12° sin(0.7<var>t</var> + 1). A rotation at the swivel therefore carries both arms, the shade and the bulb with it.</p>
+<p>One design decision mattered here. Nodes that only position things (<i>table</i>, <i>melon</i>, <i>lamp</i>, <i>elbow</i>…) never carry a scale.
+The scaled geometry hangs below them as separate leaves (<i>melon-body</i>, <i>arm-1</i>…). Otherwise a non-uniform scale such as the
+melon's (0.78, 0.48, 0.50) would leak into the stem and squash it, the same shear effect as in Part A. The debug mode draws every node's
+local axes (Figure 4). The axes use a pipeline without depth test, so axes inside a mesh stay visible.</p>
+
+<figure style="margin:2pt 0 4pt">
+<svg viewBox="0 0 640 248" width="100%">
+  <g fill="none" stroke="#999" stroke-width="0.8">
+    <path d="M84 61 H88 V10 H96"/><path d="M84 61 H88 V35.5 H96"/><path d="M84 61 H88 V112.5 H96"/>
+    <path d="M176 35.5 H180 V27 H188"/><path d="M176 35.5 H180 V44 H188"/>
+    <path d="M176 112.5 H180 V61 H188"/><path d="M176 112.5 H180 V78 H188"/><path d="M176 112.5 H180 V103.5 H188"/><path d="M176 112.5 H180 V129 H188"/><path d="M176 112.5 H180 V164 H188"/>
+    <path d="M268 103.5 H272 V95 H280"/><path d="M268 103.5 H272 V112 H280"/>
+    <path d="M268 164 H272 V146 H280"/><path d="M268 164 H272 V182 H280"/>
+    <path d="M360 182 H364 V163 H372"/><path d="M360 182 H364 V201 H372"/>
+    <path d="M452 201 H456 V180 H464"/><path d="M452 201 H456 V197 H464"/><path d="M452 201 H456 V222.5 H464"/>
+    <path d="M544 222.5 H548 V214 H556"/><path d="M544 222.5 H548 V231 H556"/>
+  </g>
+  <g font-size="8">
+    <!-- transform-only nodes: white; mesh nodes: grey; animated: orange border -->
+    <g stroke="#333" stroke-width="0.8">
+      <rect x="4" y="53" width="80" height="16" fill="#fff"/>
+      <rect x="96" y="2" width="80" height="16" fill="#e4e1db"/>
+      <rect x="96" y="27.5" width="80" height="16" fill="#e4e1db"/>
+      <rect x="96" y="104.5" width="80" height="16" fill="#fff"/>
+      <rect x="188" y="19" width="80" height="16" fill="#e4e1db"/>
+      <rect x="188" y="36" width="80" height="16" fill="#e4e1db"/>
+      <rect x="188" y="53" width="80" height="16" fill="#e4e1db"/>
+      <rect x="188" y="70" width="80" height="16" fill="#e4e1db"/>
+      <rect x="188" y="95.5" width="80" height="16" fill="#fff"/>
+      <rect x="188" y="121" width="80" height="16" fill="#e4e1db"/>
+      <rect x="188" y="156" width="80" height="16" fill="#fff"/>
+      <rect x="280" y="87" width="80" height="16" fill="#e4e1db"/>
+      <rect x="280" y="104" width="80" height="16" fill="#e4e1db"/>
+      <rect x="280" y="138" width="80" height="16" fill="#e4e1db"/>
+      <rect x="280" y="174" width="80" height="16" fill="#fff" stroke="#c2410c" stroke-width="1.6"/>
+      <rect x="372" y="155" width="80" height="16" fill="#e4e1db"/>
+      <rect x="372" y="193" width="80" height="16" fill="#fff" stroke="#c2410c" stroke-width="1.6"/>
+      <rect x="464" y="172" width="80" height="16" fill="#e4e1db"/>
+      <rect x="464" y="189" width="80" height="16" fill="#e4e1db"/>
+      <rect x="464" y="214.5" width="80" height="16" fill="#fff" stroke="#c2410c" stroke-width="1.6"/>
+      <rect x="556" y="206" width="80" height="16" fill="#e4e1db"/>
+      <rect x="556" y="223" width="80" height="16" fill="#e4e1db"/>
+    </g>
+    <g text-anchor="middle" fill="#111">
+      <text x="44" y="64">root</text>
+      <text x="136" y="13">wall</text><text x="136" y="38.5">painting (quad)</text><text x="136" y="115.5">table</text>
+      <text x="228" y="30">frame bars ×4</text><text x="228" y="47">rider</text><text x="228" y="64">table-top</text><text x="228" y="81">box-A (Part A)</text>
+      <text x="228" y="106.5">melon</text><text x="228" y="132">plate</text><text x="228" y="167">lamp</text>
+      <text x="320" y="98">melon-body</text><text x="320" y="115">stem</text><text x="320" y="149">lamp-base</text><text x="320" y="185">swivel  ↻ y</text>
+      <text x="412" y="166">arm-1</text><text x="412" y="204">elbow  ↻ z</text>
+      <text x="504" y="183">elbow-joint</text><text x="504" y="200">arm-2</text><text x="504" y="225.5">head  ↻ z</text>
+      <text x="596" y="217">shade</text><text x="596" y="234">bulb</text>
+    </g>
+    <g fill="#555" font-size="7.5">
+      <text x="4" y="244">level 0</text><text x="96" y="244">1</text><text x="188" y="244">2</text><text x="280" y="244">3</text><text x="372" y="244">4</text><text x="464" y="244">5</text><text x="556" y="244">6</text>
+    </g>
+  </g>
+</svg>
+<figcaption><b>Figure 3.</b> Scene graph. Grey boxes carry a mesh, white boxes are pure transforms, orange borders are animated joints.
+The painting's frame is drawn as one box here but is four nodes in the code.</figcaption>
+</figure>
+
+<h3>World matrix of a leaf, checked by hand</h3>
+<p>The leaf <i>stem</i> has the path root → table → melon → stem, so <var>W</var> = <var>L</var><sub>table</sub> · <var>L</var><sub>melon</sub> · <var>L</var><sub>stem</sub> with
+<var>L</var><sub>table</sub> = <var>T</var>(0, −1.3, 0.75), <var>L</var><sub>melon</sub> = <var>T</var>(0.1, 0.27, 0.05) <var>R<sub>y</sub></var>(−25°) <var>R<sub>z</sub></var>(−6°) and
+<var>L</var><sub>stem</sub> = <var>T</var>(−0.4, 0.03, 0) <var>R<sub>z</sub></var>(80°) <var>S</var>(0.025, 0.12, 0.025). The stem's origin in world space is the last column of <var>W</var>:</p>
+<ul>
+  <li><var>R<sub>z</sub></var>(−6°)·(−0.4, 0.03, 0): <var>x</var> = 0.99452(−0.4) + 0.10453(0.03) = −0.39467, <var>y</var> = 0.10453(0.4) + 0.99452(0.03) = 0.07165.</li>
+  <li><var>R<sub>y</sub></var>(−25°): <var>x</var> = 0.90631(−0.39467) = −0.35769, <var>z</var> = −0.42262 · 0.39467 = −0.16680, <var>y</var> unchanged.</li>
+  <li>Add the melon offset (0.1, 0.27, 0.05) and then the table offset (0, −1.3, 0.75): (−0.25769, −0.95835, 0.63320).</li>
+</ul>
+<p>The program prints the following for <i>stem</i>. The translation column matches the hand result to four decimals. The 3×3 block is
+<var>R<sub>y</sub></var>(−25°)<var>R<sub>z</sub></var>(−6°)<var>R<sub>z</sub></var>(80°)<var>S</var>, whose columns have lengths 0.025, 0.12 and 0.025, as they should.</p>
+<div class="row" style="align-items:center"><div class="eq" style="flex:0.9;align-self:center"><var>W</var><sub>stem</sub> =
+<span class="m"><span><i>0.0062</i><i>−0.1045</i><i>−0.0106</i><i>−0.2577</i></span><span><i>0.0240</i><i>0.0331</i><i>0</i><i>−0.9584</i></span><span><i>0.0029</i><i>−0.0487</i><i>0.0227</i><i>0.6332</i></span><span><i>0</i><i>0</i><i>0</i><i>1</i></span></span></div><figure style="flex:1.1"><img src="img/b_axes.jpg" alt=""><figcaption><b>Figure 4.</b> Debug mode: local axes of every node (x red, y green, z blue). Along the lamp each joint's frame is rotated relative to its parent.</figcaption></figure></div>
+
+
+
+<h2>4 · Part C: camera and projection</h2>
+<h3>View matrix</h3>
+<p>The camera sits at <var>e</var>, looks at the target <var>c</var>, and, as usual, looks down its own −<var>z</var> axis. Two cross products give an orthonormal frame:</p>
+<div class="eq"><var>w</var> = (<var>e</var> − <var>c</var>) / ‖<var>e</var> − <var>c</var>‖, &nbsp; <var>u</var> = (<var>up</var> × <var>w</var>) / ‖<var>up</var> × <var>w</var>‖, &nbsp; <var>v</var> = <var>w</var> × <var>u</var>.</div>
+<p>The camera-to-world matrix is <var>C</var> = [<var>u v w e</var>] (axes and origin as columns). This is a rigid transform, so the view matrix is its
+rigid inverse, <var>V</var> = <var>C</var><sup>−1</sup> = [<var>R</var><sup>T</sup> | −<var>R</var><sup>T</sup><var>e</var>]. Its rows are <var>u</var>, <var>v</var>, <var>w</var>, and its translation column is
+(−<var>u·e</var>, −<var>v·e</var>, −<var>w·e</var>). The unit test checks that <var>V e</var> = 0 and that <var>V c</var> lies on the negative <var>z</var> axis at distance ‖<var>e</var> − <var>c</var>‖.
+<b>Degenerate case:</b> if <var>up</var> is parallel to <var>w</var>, then <var>up</var> × <var>w</var> = 0 and <var>u</var> is undefined. When ‖<var>up</var> × <var>w</var>‖ &lt; 10<sup>−6</sup>, <code>lookAt</code> switches
+to a different up vector: (0, 0, −sign <var>w<sub>y</sub></var>) when the camera looks almost straight up or down, otherwise (0, 1, 0).
+This choice keeps world <var>x</var> pointing right on screen in the overhead view. The <i>top view</i> button puts the camera exactly above the
+target to show this case (Figure 6b).</p>
+
+<h3>Perspective and orthographic projection for WebGPU</h3>
+<p>With <var>f</var> = cot(fov/2), <var>x</var> and <var>y</var> are scaled by <var>f</var>/aspect and <var>f</var>, and the divide by <var>w<sub>clip</sub></var> = −<var>z</var> produces the
+perspective. For depth, write <var>z<sub>clip</sub></var> = <var>A z</var> + <var>B</var>. WebGPU wants <var>z<sub>ndc</sub></var> = 0 at <var>z</var> = −<var>n</var> and 1 at <var>z</var> = −<var>f</var>:</p>
+<div class="eq">(−<var>An</var> + <var>B</var>)/<var>n</var> = 0, &nbsp; (−<var>Af</var> + <var>B</var>)/<var>f</var> = 1 &nbsp; ⇒ &nbsp; <var>A</var> = <var>f</var>/(<var>n</var> − <var>f</var>), &nbsp; <var>B</var> = <var>nf</var>/(<var>n</var> − <var>f</var>).</div>
+<p>OpenGL's [−1, 1] version would have <var>A</var> = (<var>f</var> + <var>n</var>)/(<var>n</var> − <var>f</var>) and <var>B</var> = 2<var>fn</var>/(<var>n</var> − <var>f</var>). In WebGPU that matrix would
+send everything near the camera to <var>z<sub>ndc</sub></var> &lt; 0, where it gets clipped. The orthographic matrix uses the same depth mapping,
+<var>z<sub>ndc</sub></var> = (<var>z</var> + <var>n</var>)/(<var>n</var> − <var>f</var>). Its half-height is set to <var>d</var>·tan(fov/2), where <var>d</var> is the orbit distance, so the
+target keeps its size when the projection is switched at run time (Figure 5). The mouse orbits (yaw/pitch on a sphere around the
+target), pans and zooms. Eye, target, fov, near and far are always shown on screen.</p>
+
+<div class="row four">
+  <figure><img src="img/c_persp.jpg" alt=""><figcaption><b>Figure 5a.</b> Perspective, fov 45°, near 0.1, far 12.</figcaption></figure>
+  <figure><img src="img/c_ortho.jpg" alt=""><figcaption><b>Figure 5b.</b> Orthographic, same camera. Parallel edges of the table stay parallel.</figcaption></figure>
+
+  <figure><img src="img/c_frustum.jpg" alt=""><figcaption><b>Figure 6a.</b> Side by side: the inspection camera (right) sees the main camera's perspective frustum (yellow) and its axes.</figcaption></figure>
+  <figure><img src="img/c_top.jpg" alt=""><figcaption><b>Figure 6b.</b> Top view: <var>up</var> parallel to the view direction. The fallback up keeps <var>x</var> to the right, and the panel reports it.</figcaption></figure>
+</div>
+<p>The inspection camera is fixed and draws the main camera's frustum. Its corners come straight from the camera frame: at distance
+<var>d</var> ∈ {<var>n</var>, <var>f</var>} the rectangle is centred at <var>e</var> − <var>d w</var> with half-size <var>d</var> tan(fov/2)·(aspect, 1). For the orthographic case
+the half-size is constant. A unit test projects these corners back through <var>P V</var> and gets NDC (±1, ±1, 0/1).</p>
+
+
+<h3>Near and far</h3>
+<p>The depth buffer stores <var>z<sub>ndc</sub></var>, which is proportional to 1/<var>z</var>. Differentiating gives the smallest resolvable depth step at eye distance <var>z</var>,
+for a buffer with 2<sup>−24</sup> resolution:</p>
+<div class="eq">Δ<var>z</var> ≈ 2<sup>−24</sup> · <var>z</var><sup>2</sup> (<var>f</var> − <var>n</var>) / (<var>n f</var>) ≈ 2<sup>−24</sup> <var>z</var><sup>2</sup> / <var>n</var> &nbsp; (for <var>f</var> ≫ <var>n</var>).</div>
+<table class="data">
+  <tr><th>near</th><th>far</th><th>Δ<var>z</var> at distance 5.2 (the target)</th><th>Δ<var>z</var> at distance 10</th></tr>
+  <tr><td>0.1</td><td>12</td><td>1.6·10<sup>−5</sup></td><td>5.9·10<sup>−5</sup></td></tr>
+  <tr><td>0.1</td><td>100</td><td>1.6·10<sup>−5</sup></td><td>6.0·10<sup>−5</sup></td></tr>
+  <tr><td>0.01</td><td>12</td><td>1.6·10<sup>−4</sup></td><td>6.0·10<sup>−4</sup></td></tr>
+  <tr><td>0.001</td><td>12</td><td>1.6·10<sup>−3</sup></td><td>6.0·10<sup>−3</sup></td></tr>
+</table>
+<p>The far plane hardly matters, but every factor of ten taken off the near plane costs a factor of ten in precision. I use <b>near = 0.1,
+far = 12</b>. The orbit distance is clamped to at least 1.2, so in normal use the geometry stays well beyond the near plane. The whole scene
+(wall at about 5–6 units from the default eye) fits inside 12 with margin, and a short far plane keeps the frustum drawing readable. The curve is
+lifted 0.004–0.01 units off the painting. That is more than 100 times the depth step at this distance, so it does not z-fight with the quad.
+With near = 0.001 the step would be 1.6·10<sup>−3</sup>, and the ribbon would be only two or three depth steps in front of the painting, close
+enough to start fighting with it. The panel shows the current Δ<var>z</var> live.</p>
+
+<h2>5 · Part D: curves over the painting</h2>
+<p><b>Bézier basis.</b> A cubic segment is <var>B</var>(<var>t</var>) = Σ <var>P<sub>i</sub> b<sub>i</sub></var>(<var>t</var>) with the Bernstein polynomials
+<var>b</var><sub>0</sub> = (1 − <var>t</var>)<sup>3</sup>, <var>b</var><sub>1</sub> = 3<var>t</var>(1 − <var>t</var>)<sup>2</sup>, <var>b</var><sub>2</sub> = 3<var>t</var><sup>2</sup>(1 − <var>t</var>), <var>b</var><sub>3</sub> = <var>t</var><sup>3</sup>, which sum to (<var>t</var> + 1 − <var>t</var>)<sup>3</sup> = 1.</p>
+<p><b>Endpoints.</b> At <var>t</var> = 0, <var>b</var><sub>0</sub>(0) = 1, and <var>b</var><sub>1</sub>, <var>b</var><sub>2</sub>, <var>b</var><sub>3</sub> all contain the factor <var>t</var>, so they vanish and <var>B</var>(0) = <var>P</var><sub>0</sub>. At <var>t</var> = 1,
+<var>b</var><sub>3</sub>(1) = 1, and <var>b</var><sub>0</sub>, <var>b</var><sub>1</sub>, <var>b</var><sub>2</sub> contain the factor (1 − <var>t</var>), so <var>B</var>(1) = <var>P</var><sub>3</sub>. ∎ Differentiating,
+<var>B</var>′(<var>t</var>) = 3[(1 − <var>t</var>)<sup>2</sup>(<var>P</var><sub>1</sub> − <var>P</var><sub>0</sub>) + 2<var>t</var>(1 − <var>t</var>)(<var>P</var><sub>2</sub> − <var>P</var><sub>1</sub>) + <var>t</var><sup>2</sup>(<var>P</var><sub>3</sub> − <var>P</var><sub>2</sub>)], so
+<var>B</var>′(0) = 3(<var>P</var><sub>1</sub> − <var>P</var><sub>0</sub>) and <var>B</var>′(1) = 3(<var>P</var><sub>3</sub> − <var>P</var><sub>2</sub>). The handles set the end tangents.</p>
+<p><b>C¹ at a joint.</b> The piecewise curve is stored as <var>P</var><sub>0</sub> … <var>P</var><sub>3<var>n</var></sub>. Segment <var>k</var> uses <var>P</var><sub>3<var>k</var></sub> … <var>P</var><sub>3<var>k</var>+3</sub>, so two segments share the
+knot <var>K</var> = <var>P</var><sub>3<var>k</var></sub>. Position continuity (C⁰) holds by construction. C¹ needs 3(<var>K</var> − <var>P</var><sub>3<var>k</var>−1</sub>) = 3(<var>P</var><sub>3<var>k</var>+1</sub> − <var>K</var>), i.e.</p>
+<div class="eq"><var>P</var><sub>3<var>k</var>+1</sub> = 2<var>K</var> − <var>P</var><sub>3<var>k</var>−1</sub> &nbsp; (the two handles are mirror images through the knot).</div>
+<p>The editor keeps this true. Dragging a handle moves the mirrored handle on the other side, and dragging a knot moves both of its
+handles by the same amount. The panel prints max ‖<var>B</var>′<sub><var>k</var></sub>(1) − <var>B</var>′<sub><var>k</var>+1</sub>(0)‖ over all joints, which stays at 0 up to
+rounding (about 10<sup>−16</sup>) after any edit.</p>
+<p><b>de Casteljau.</b> For a chosen segment and <var>t</var> the app draws the two intermediate levels of linear interpolation (three green points, then
+two purple ones) and the final point (red), which is <var>B</var>(<var>t</var>) (Figure 7b). A test checks that it agrees with the Bernstein form.
+<b>Catmull–Rom.</b> As the second curve family I implemented the uniform Catmull–Rom spline through the knots,
+<var>C</var>(<var>t</var>) = ½[2<var>P<sub>i</sub></var> + (<var>P</var><sub><var>i</var>+1</sub> − <var>P</var><sub><var>i</var>−1</sub>)<var>t</var> + (2<var>P</var><sub><var>i</var>−1</sub> − 5<var>P<sub>i</sub></var> + 4<var>P</var><sub><var>i</var>+1</sub> − <var>P</var><sub><var>i</var>+2</sub>)<var>t</var><sup>2</sup> + (−<var>P</var><sub><var>i</var>−1</sub> + 3<var>P<sub>i</sub></var> − 3<var>P</var><sub><var>i</var>+1</sub> + <var>P</var><sub><var>i</var>+2</sub>)<var>t</var><sup>3</sup>].
+It passes through every point with tangent (<var>P</var><sub><var>i</var>+1</sub> − <var>P</var><sub><var>i</var>−1</sub>)/2. Each segment is the Bézier with handles <var>P<sub>i</sub></var> + (<var>P</var><sub><var>i</var>+1</sub> − <var>P</var><sub><var>i</var>−1</sub>)/6 and <var>P</var><sub><var>i</var>+1</sub> − (<var>P</var><sub><var>i</var>+2</sub> − <var>P<sub>i</sub></var>)/6,
+which a unit test confirms. The end segments use reflected ghost points (2<var>P</var><sub>0</sub> − <var>P</var><sub>1</sub>). Both curve types share the same knots, so I can
+switch between them while tracing (Figure 7c).</p>
+<p><b>Tracing and interaction.</b> The control points live in the painting's plane. A mouse press is turned into a ray from the camera, the ray is
+intersected with the plane of the painting node, and the hit is mapped into the painting's frame with its rigid inverse. Picking happens in
+screen space (12 px radius), so it works the same under both projections. Double-clicking adds a segment. I placed the knots on the outline of the
+whole melon: the bottom of the cut face, the top of the cut, the top of the rind, the shoulder and the right end. I then moved the handles until the
+middle of each segment lay on the contour. <b>Animation.</b> The rider moves at constant speed: a 400-sample arc-length table maps distance to
+parameter by binary search. Its frame is [<var>T</var> × <var>Z</var>, <var>T</var>, <var>Z</var>, <var>p</var>], with <var>T</var> the unit tangent and <var>Z</var> the painting normal, so the cone always points along the curve.
+<b>Export</b> writes <code>curve.json</code> with normalised coordinates, (0, 0) at the bottom-left and (1, 1) at the top-right (Appendix A).</p>
+
+<div class="row">
+  <figure style="flex:1.35"><img src="img/d_curve.jpg" alt=""><figcaption><b>Figure 7a.</b> Traced outline of the melon: 4 cubic Bézier segments, C¹ at the joints. White discs are knots, blue squares are handles. The red cone rides the curve.</figcaption></figure>
+  <figure><img src="img/d_casteljau.jpg" alt=""><figcaption><b>Figure 7b.</b> de Casteljau construction on segment 2 at <var>t</var> = 0.5. The red point is <var>B</var>(0.5).</figcaption></figure>
+  <figure><img src="img/d_catmull.jpg" alt=""><figcaption><b>Figure 7c.</b> Catmull–Rom spline through the same knots.</figcaption></figure>
+</div>
+
+<h2>6 · Part E: integration and performance</h2>
+<p>Everything is one page. The code is split into <code>math/</code> (vectors, matrices, curves: no WebGPU), <code>scene/</code> (nodes, the scene,
+cameras, the editable curve), <code>render/</code> (device setup, WGSL, pipelines, procedural meshes) and <code>ui/</code> (panel, mouse, text overlays).
+The renderer has four pipelines: lit meshes, the textured painting, lines and flat overlay triangles, plus the overlay-line variant for
+the axes. Per-object and per-view uniforms live in two buffers addressed with 256-byte dynamic offsets, so one bind group serves every
+draw. Rendering uses 4× MSAA. The painting is an <code>rgba8unorm-srgb</code> texture and the frame is rendered through an
+<code>-srgb</code> view of the canvas, so lighting is computed in linear space and encoded once on output. The controls switch views and projection,
+reset the camera, the curve or the whole scene, and toggle every debug drawing. 26 unit tests (<code>npm test</code>) cover the maths, the
+scene graph and the camera.</p>
+<table class="data">
+  <tr><th>Mode (canvas 2600×1900 px, 2× DPR)</th><th>Frame time avg / p95 / max</th><th>CPU per frame (median / max)</th><th>Vertices / frame</th><th>Draws</th></tr>
+  <tr><td>Main camera</td><td>16.67 / 17.7 / 17.8 ms</td><td>1.9 / 2.9 ms</td><td>26 190</td><td>20</td></tr>
+  <tr><td>Side by side</td><td>16.67 / 17.7 / 17.8 ms</td><td>1.8 / 3.2 ms</td><td>52 418</td><td>40</td></tr>
+  <tr><td>Side by side + node axes</td><td>16.95 / 17.7 / 33.4 ms</td><td>1.9 / 4.3 ms</td><td>52 706</td><td>42</td></tr>
+</table>
+<p>Measured on an <b>Apple M3 (10-core GPU), macOS 26.3.1</b>, in a Chromium 152 based browser, over 5 s (about 300 frames) per mode.
+"Vertices" counts indices for indexed draws. The frame time sits at the 60 Hz refresh interval in every mode, so the GPU is not the limit for this
+scene. The one 33 ms frame is a single missed refresh. CPU time (animation, world matrices, line and triangle batches, uniform uploads) is about
+2 ms. I did not use GPU timestamp queries, so the pure GPU time is not measured. The text panels are refreshed ten times a second rather than every
+frame, because their content does not need to change faster than that.</p>
+
+<h2>7 · What went wrong and how I found it</h2>
+<ul>
+  <li><b>The inspection camera "could not see" the main camera.</b> The yellow frustum lines ran off the right edge of the view. Projecting the main
+  camera's eye by hand gave <var>x<sub>ndc</sub></var> ≈ 0.67, so it should have been visible. The real cause was the control panel, which was drawn on top
+  of the canvas and covered exactly that region. The panel now has its own column and the canvas ends where the panel begins.</li>
+  <li><b>The first trace was off at the melon's right end.</b> Viewed head-on, the knot I had put at (620, 130) px was outside the outline. At that height the
+  contour is at about <var>x</var> = 597. I enlarged crops of the image, read off points on the outline, and re-placed the knots so that each segment's midpoint
+  (<var>t</var> = ½, easy to compute by hand) falls on the contour.</li>
+  <li><b>The overhead view came out rotated by 90°.</b> My first fallback in <code>lookAt</code> took the world axis least aligned with <var>w</var> as the new up vector.
+  For a camera looking straight down that is the <var>x</var> axis, so the screen's up pointed along world <var>x</var> and the scene appeared on its side. I noticed
+  this while working out by hand what the top view should look like. The fallback now uses the <var>z</var> axis for near-vertical views, and a unit test
+  checks that world +<var>x</var> still maps to screen right.</li>
+  <li><b>The debug axes were invisible.</b> The origins of most nodes are inside their own meshes, so the depth test hid the axes. Drawing them in a
+  separate pass with <code>depthCompare: 'always'</code> fixed this without affecting the curve overlays, which must stay depth-tested.</li>
+</ul>
+
+<h2>Appendix A · Exported curve (<code>public/curve.json</code>)</h2>
+<pre>{ "painting": "Kavunlu Natürmort", "artist": "Şeker Ahmed Paşa",
+  "coordinates": "normalised to the painting: (0,0) bottom-left, (1,1) top-right",
+  "type": "bezier", "continuity": "C1 (handles mirrored at every joint)", "segments": 4,
+  "points": [
+    { "x": 0.2417, "y": 0.4781, "role": "knot" },    { "x": 0.2167, "y": 0.5717, "role": "handle" },
+    { "x": 0.2222, "y": 0.7012, "role": "handle" },  { "x": 0.2819, "y": 0.7729, "role": "knot" },
+    { "x": 0.3417, "y": 0.8446, "role": "handle" },  { "x": 0.4583, "y": 0.8884, "role": "handle" },
+    { "x": 0.5556, "y": 0.8884, "role": "knot" },    { "x": 0.6528, "y": 0.8884, "role": "handle" },
+    { "x": 0.7917, "y": 0.8167, "role": "handle" },  { "x": 0.8375, "y": 0.7251, "role": "knot" },
+    { "x": 0.8833, "y": 0.6335, "role": "handle" },  { "x": 0.9028, "y": 0.4821, "role": "handle" },
+    { "x": 0.8583, "y": 0.4223, "role": "knot" } ] }</pre>
+<p style="font-size:8.4pt;color:#555">The file in the repository has one key per line; it is reformatted here to save space. Check C¹ at the second knot: 2·(0.2819, 0.7729) − (0.2222, 0.7012) = (0.3416, 0.8446), which is the next handle (to rounding).</p>
+
+<h2>Appendix B · Use of AI tools</h2>
+<p>I used <b>Claude Code</b> (Anthropic, model Claude Opus 5.5) in this project. From the assignment handout and the interactive
+specification it generated the application code (maths library, scene graph, cameras, curves, WebGPU renderer and UI), the unit tests, the
+screenshots and a first draft of this report, including the derivations and the measurements in Section 6.
+<span class="todo">[Describe here what you did yourself: which parts you reviewed or rewrote, which derivations you checked by hand, what you
+changed after testing, and anything you asked the tool to fix.]</span></p>
+
+</body>
+</html>
