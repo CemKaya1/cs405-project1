@@ -85,7 +85,8 @@ so the offset itself gets rotated and scaled: the box ends up at <var>S R t</var
 The scale also comes after the rotation, so it stretches along the <i>world</i> axes of an already rotated box. The first two
 columns are no longer orthogonal (their dot product is −0.092), and the box turns into a sheared parallelepiped. Figure 2
 shows both cases. The wireframe "ghost" is always drawn with the order that is not in use. Everywhere else in the code a local
-transform is built as <var>T·R·S</var>.</p>
+transform is built as <var>T·R·S</var>, because it reads as "go to the joint, turn there, then size the shape": the translation
+column is exactly the position I typed, rotations happen about the node's own origin, and the scale never reaches the offset.</p>
 
 <div class="row">
   <figure><img src="img/a_trs.jpg" alt=""><figcaption><b>Figure 2a.</b> <var>M = T·R·S</var> (in use, highlighted). The yellow wireframe is the <var>S·R·T</var> result.</figcaption></figure>
